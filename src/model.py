@@ -3,18 +3,17 @@ import os
 import pickle
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
-from src.features import build_features
 
 MODEL_PATH = "data/model.pkl"
+FEATURE_COLS = ['home_win_rate', 'home_draw_rate', 'away_win_rate', 'away_draw_rate', 'home_advantage']
 
 
 def train_model(df: pd.DataFrame, model_path: str = MODEL_PATH):
-    """Train Random Forest model and save to disk."""
-    df = build_features(df)
-    df = df.dropna(subset=['home_score', 'away_score'])
-
-    feature_cols = ['home_win_rate', 'home_draw_rate', 'away_win_rate', 'away_draw_rate', 'home_advantage']
-    X = df[feature_cols]
+    """
+    Train Random Forest model and save to disk.
+    df must already have feature columns (output of build_features).
+    """
+    X = df[FEATURE_COLS]
     y = df['result']
 
     model = RandomForestClassifier(n_estimators=200, random_state=42)
@@ -35,14 +34,15 @@ def load_model(model_path: str = MODEL_PATH):
         return pickle.load(f)
 
 
-def predict_proba(model, row: dict) -> dict:
+def predict_proba(model, row) -> dict:
     """
     Predict probabilities for a single match.
     row must have: home_win_rate, home_draw_rate, away_win_rate, away_draw_rate, home_advantage
-    Returns dict with H, D, A probabilities.
+    Returns dict with home, draw, away probabilities.
     """
-    feature_cols = ['home_win_rate', 'home_draw_rate', 'away_win_rate', 'away_draw_rate', 'home_advantage']
-    X = pd.DataFrame([{col: row.get(col, 0.0) for col in feature_cols}])
+    if hasattr(row, 'to_dict'):
+        row = row.to_dict()
+    X = pd.DataFrame([[row.get(col, 0.0) for col in FEATURE_COLS]], columns=FEATURE_COLS)
     proba = model.predict_proba(X)[0]
     classes = model.classes_
     return {c: float(p) for c, p in zip(classes, proba)}
