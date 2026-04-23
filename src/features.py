@@ -1,5 +1,6 @@
 # src/features.py
 import pandas as pd
+import numpy as np
 
 
 def _get_team_stats(past: pd.DataFrame, team: str, n: int = 10) -> dict:
@@ -69,6 +70,15 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
         a = _get_team_stats(past, row['away_team'])
         home_wr = _get_home_win_rate(past, row['home_team'])
 
+        # 배당 내재 확률 (북메이커 정보)
+        ho = float(row['home_odds']) if pd.notna(row.get('home_odds')) and row.get('home_odds') else 0
+        do = float(row['draw_odds']) if pd.notna(row.get('draw_odds')) and row.get('draw_odds') else 0
+        ao = float(row['away_odds']) if pd.notna(row.get('away_odds')) and row.get('away_odds') else 0
+        total_imp = (1/ho if ho > 0 else 0) + (1/do if do > 0 else 0) + (1/ao if ao > 0 else 0)
+        imp_home = (1/ho / total_imp) if ho > 0 and total_imp > 0 else 1/3
+        imp_draw = (1/do / total_imp) if do > 0 and total_imp > 0 else 1/3
+        imp_away = (1/ao / total_imp) if ao > 0 and total_imp > 0 else 1/3
+
         features.append({
             # 홈팀 피처
             'home_win_rate': h['win_rate'],
@@ -87,6 +97,10 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
             # 상대 비교
             'form_diff': h['form'] - a['form'],
             'goal_diff': h['goals_scored'] - a['goals_scored'],
+            # 배당 내재 확률 (핵심 피처)
+            'imp_home': imp_home,
+            'imp_draw': imp_draw,
+            'imp_away': imp_away,
             # 데이터 수
             'home_n': h['n'],
             'away_n': a['n'],

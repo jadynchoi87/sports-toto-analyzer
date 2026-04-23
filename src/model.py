@@ -9,6 +9,7 @@ FEATURE_COLS = [
     'home_win_rate', 'home_draw_rate', 'home_goals_scored', 'home_goals_conceded', 'home_form',
     'away_win_rate', 'away_draw_rate', 'away_goals_scored', 'away_goals_conceded', 'away_form',
     'home_advantage', 'form_diff', 'goal_diff',
+    'imp_home', 'imp_draw', 'imp_away',  # 배당 내재 확률
 ]
 
 
