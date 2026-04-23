@@ -88,6 +88,52 @@ def _implied_probs(row) -> tuple[float, float, float]:
     return raw_h / total, raw_d / total, raw_a / total
 
 
+def build_upcoming_features(df_hist: pd.DataFrame, df_upcoming: pd.DataFrame) -> pd.DataFrame:
+    """
+    예정 경기 피처만 빠르게 계산. 과거 데이터 전체를 'past'로 사용.
+    build_features의 O(n²) 문제 없이 O(m) 처리.
+    """
+    df_hist = df_hist.copy()
+    df_hist['date'] = pd.to_datetime(df_hist['date'])
+    df_hist = df_hist.sort_values('date').reset_index(drop=True)
+
+    # result 컬럼 추가 (있을 수도 있으므로 조건부)
+    if 'result' not in df_hist.columns:
+        df_hist['result'] = df_hist.apply(
+            lambda r: 'home' if r['home_score'] > r['away_score']
+                      else ('draw' if r['home_score'] == r['away_score'] else 'away'),
+            axis=1
+        )
+
+    features = []
+    for _, row in df_upcoming.iterrows():
+        h = _get_team_stats(df_hist, row['home_team'])
+        a = _get_team_stats(df_hist, row['away_team'])
+        home_wr = _get_home_win_rate(df_hist, row['home_team'])
+        h2h = _get_h2h_stats(df_hist, row['home_team'], row['away_team'])
+        imp_home, imp_draw, imp_away = _implied_probs(row)
+
+        features.append({
+            'home_win_rate': h['win_rate'], 'home_draw_rate': h['draw_rate'],
+            'home_goals_scored': h['goals_scored'], 'home_goals_conceded': h['goals_conceded'],
+            'home_form': h['form'],
+            'away_win_rate': a['win_rate'], 'away_draw_rate': a['draw_rate'],
+            'away_goals_scored': a['goals_scored'], 'away_goals_conceded': a['goals_conceded'],
+            'away_form': a['form'],
+            'home_advantage': home_wr,
+            'form_diff': h['form'] - a['form'],
+            'goal_diff': h['goals_scored'] - a['goals_scored'],
+            'goals_conceded_diff': a['goals_conceded'] - h['goals_conceded'],
+            'h2h_home_win_rate': h2h['h2h_home_win_rate'],
+            'h2h_draw_rate': h2h['h2h_draw_rate'],
+            'imp_home': imp_home, 'imp_draw': imp_draw, 'imp_away': imp_away,
+            'home_n': h['n'], 'away_n': a['n'],
+        })
+
+    feat_df = pd.DataFrame(features, index=df_upcoming.index)
+    return pd.concat([df_upcoming.reset_index(drop=True), feat_df.reset_index(drop=True)], axis=1)
+
+
 def build_features(df: pd.DataFrame) -> pd.DataFrame:
     """
     Build features from match DataFrame.
