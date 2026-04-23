@@ -21,8 +21,10 @@ def fetch_finished_matches(competition: str, days_back: int = 30) -> list[dict]:
     return resp.json().get("matches", [])
 
 
-def normalize_match(raw: dict, competition: str) -> dict:
+def normalize_match(raw: dict, competition: str) -> dict | None:
     score = raw["score"]["fullTime"]
+    if score["home"] is None or score["away"] is None:
+        return None
     return {
         "match_id": str(raw["id"]),
         "date": raw["utcDate"][:10],
@@ -44,7 +46,9 @@ def collect_all(db_path: str = "data/toto.db", days_back: int = 90):
         try:
             matches = fetch_finished_matches(comp, days_back)
             for m in matches:
-                insert_match(db_path, normalize_match(m, comp))
+                normalized = normalize_match(m, comp)
+                if normalized is not None:
+                    insert_match(db_path, normalized)
             total += len(matches)
             print(f"{comp}: {len(matches)}경기 수집")
         except Exception as e:

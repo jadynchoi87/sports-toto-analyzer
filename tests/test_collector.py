@@ -24,3 +24,12 @@ def test_normalize_match_date_trimmed():
     }
     result = normalize_match(raw, "BL1")
     assert len(result["date"]) == 10  # YYYY-MM-DD 형식
+
+def test_normalize_match_null_score_returns_none():
+    raw = {
+        "id": 999, "utcDate": "2024-06-01T00:00:00Z",
+        "homeTeam": {"name": "A"}, "awayTeam": {"name": "B"},
+        "score": {"fullTime": {"home": None, "away": None}}
+    }
+    result = normalize_match(raw, "PL")
+    assert result is None
