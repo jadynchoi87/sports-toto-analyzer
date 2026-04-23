@@ -23,7 +23,7 @@ def _get_model():
 
 
 def render(db_path: str):
-    st.header("전략")
+    st.header("💰 배팅 추천")
 
     try:
         model, le = _get_model()
@@ -38,15 +38,24 @@ def render(db_path: str):
 
     df_hist = pd.DataFrame(matches)
 
-    # 설정
-    col1, col2, col3 = st.columns(3)
-    bankroll = col1.number_input("보유 자금 (원)", min_value=10000, value=100000, step=10000)
-    min_prob = col2.slider("최소 신뢰도", 0.50, 0.80, 0.60, 0.01)
-    days_ahead = col3.slider("예측 기간 (일)", 1, 14, 7, key="strategy_days")
-    kelly_mode = st.radio("켈리 모드", ["하프 켈리 (안전)", "풀 켈리"], horizontal=True)
-    half = kelly_mode == "하프 켈리 (안전)"
+    st.markdown("### ⚙️ 내 설정")
+    col1, col2 = st.columns(2)
+    bankroll = col1.number_input("내 배팅 자금 (원)", min_value=10000, value=100000, step=10000,
+                                  help="전체 배팅에 쓸 총 자금")
+    days_ahead = col2.slider("며칠 내 경기 볼까요?", 1, 14, 7, key="strategy_days")
 
-    with st.spinner("예정 경기 불러오는 중..."):
+    safety = st.radio(
+        "배팅 스타일",
+        ["🛡️ 안전하게 (추천)", "⚡ 공격적으로"],
+        horizontal=True,
+        help="안전하게: 적게 걸고 오래 즐기기 / 공격적으로: 많이 걸고 수익 극대화 (리스크 높음)"
+    )
+    half = safety == "🛡️ 안전하게 (추천)"
+
+    min_prob = st.slider("이 확률 이상만 보기", 0.50, 0.80, 0.60, 0.01,
+                          help="숫자가 높을수록 AI가 더 확신하는 경기만 보여줍니다")
+
+    with st.spinner("예정 경기 분석 중..."):
         upcoming = _get_upcoming(days_ahead)
 
     if not upcoming:
@@ -57,10 +66,10 @@ def render(db_path: str):
     df_upcoming['home_score'] = 0
     df_upcoming['away_score'] = 0
 
-    with st.spinner("확률 계산 중..."):
+    with st.spinner("AI 분석 중..."):
         upcoming_features = build_upcoming_features(df_hist, df_upcoming)
 
-        outcome_kor = {'home': '홈 승', 'draw': '무승부', 'away': '원정 승'}
+        outcome_kor = {'home': '홈팀 승', 'draw': '무승부', 'away': '원정팀 승'}
         rows = []
 
         for i, (_, row) in enumerate(upcoming_features.iterrows()):
@@ -72,51 +81,45 @@ def render(db_path: str):
             if best_prob < min_prob:
                 continue
 
-            odds_min_ev0 = round(1 / best_prob, 2)
-            odds_min_ev5 = round(1.05 / best_prob, 2)
-            kelly_f = calc_kelly(best_prob, odds_min_ev0, half=half)
-            bet_amount = bankroll * kelly_f
+            # 이 배당 이상이면 수익 기대 가능
+            min_odds = round(1 / best_prob, 2)
+            kelly_f = calc_kelly(best_prob, min_odds, half=half)
+            bet_amount = int(bankroll * kelly_f)
 
             rows.append({
                 '날짜': match_info['date'],
                 '리그': match_info['competition'],
                 '홈팀': match_info['home_team'],
                 '원정팀': match_info['away_team'],
-                '배팅 추천': outcome_kor.get(best_outcome, best_outcome),
-                '신뢰도': best_prob,
-                '최소 배당 (±EV)': odds_min_ev0,
-                '최소 배당 (EV≥5%)': odds_min_ev5,
-                '추천 배팅액(원)': int(bet_amount),
+                '▶ 배팅 추천': outcome_kor.get(best_outcome, best_outcome),
+                'AI 확신도': f"{best_prob:.0%}",
+                '이 배당 이상이면 배팅 ✅': min_odds,
+                '추천 배팅 금액': f"{bet_amount:,}원",
             })
 
     if not rows:
-        st.warning(f"신뢰도 {min_prob:.0%} 이상 경기 없음 — 슬라이더를 낮춰보세요.")
+        st.warning(f"AI 확신도 {min_prob:.0%} 이상 경기가 없어요. 슬라이더를 낮춰보세요.")
         return
 
-    df_result = pd.DataFrame(rows)
-    st.subheader(f"배팅 추천 ({len(df_result)}경기)")
-    st.caption("'최소 배당' 이상 배당을 찾으면 배팅하세요. 배팅 사이트에서 실제 배당 확인 필수.")
-    st.dataframe(
-        df_result.style.format({'신뢰도': '{:.1%}', '추천 배팅액(원)': '{:,}'}),
-        use_container_width=True
-    )
+    st.markdown(f"### 📋 배팅 추천 경기 ({len(rows)}경기)")
+    st.info("💡 **사용법**: 토토사이트에서 아래 경기의 배당을 확인하고, '이 배당 이상이면 배팅' 숫자보다 높으면 배팅하세요.")
+
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
     st.divider()
-    st.subheader("EV / Kelly 계산기")
-    st.caption("실제 배당을 찾았을 때 검증용")
-    c1, c2 = st.columns(2)
-    prob_m = c1.number_input("예측 확률", 0.0, 1.0, 0.60, 0.01)
-    odds_m = c2.number_input("실제 배당률", 1.01, 20.0, 2.0, 0.1)
 
-    ev = calc_ev(prob_m, odds_m)
-    kelly_f2 = calc_kelly(prob_m, odds_m, half=half)
+    # 직접 계산기
+    with st.expander("🔢 직접 계산해보기 (선택)"):
+        st.caption("배팅 전 최종 확인용")
+        c1, c2 = st.columns(2)
+        prob_m = c1.number_input("AI 확신도 (직접 입력)", 0.01, 1.0, 0.60, 0.01)
+        odds_m = c2.number_input("실제 배당률", 1.01, 20.0, 2.0, 0.1)
 
-    m1, m2, m3 = st.columns(3)
-    m1.metric("기대값 (EV)", f"{ev:.3f}")
-    m2.metric("켈리 비율", f"{kelly_f2:.3f}")
-    m3.metric("추천 배팅 금액", f"{bankroll * kelly_f2:,.0f}원")
+        ev = calc_ev(prob_m, odds_m)
+        kelly_f2 = calc_kelly(prob_m, odds_m, half=half)
+        bet2 = int(bankroll * kelly_f2)
 
-    if ev >= 0.05 and prob_m >= min_prob:
-        st.success("✅ 베팅 조건 충족 — 배팅 가능!")
-    else:
-        st.error("❌ 조건 미충족 — 배팅 비추천")
+        if ev > 0 and prob_m >= min_prob:
+            st.success(f"✅ 배팅 추천! → {bet2:,}원 거세요")
+        else:
+            st.error("❌ 이 조건은 배팅하지 마세요 (기대 손실)")
