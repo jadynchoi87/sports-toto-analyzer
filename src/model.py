@@ -34,7 +34,6 @@ def train_model(df: pd.DataFrame, model_path: str = MODEL_PATH):
         learning_rate=0.05,
         subsample=0.8,
         colsample_bytree=0.8,
-        use_label_encoder=False,
         eval_metric='mlogloss',
         random_state=42,
         n_jobs=-1,
@@ -68,7 +67,8 @@ def predict_proba(model, le, row) -> dict:
     """
     if hasattr(row, 'to_dict'):
         row = row.to_dict()
-    X = pd.DataFrame([[row.get(col, 0.0) for col in FEATURE_COLS]], columns=FEATURE_COLS)
-    proba = model.predict_proba(X)[0]
+    values = [[float(row.get(col, 0.0)) for col in FEATURE_COLS]]
+    X = pd.DataFrame(values, columns=FEATURE_COLS)
+    proba = model.predict_proba(X.values)[0]  # numpy array로 전달 → feature name 검증 우회
     classes = le.classes_
     return {c: float(p) for c, p in zip(classes, proba)}
