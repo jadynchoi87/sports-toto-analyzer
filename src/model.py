@@ -5,7 +5,11 @@ import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 
 MODEL_PATH = "data/model.pkl"
-FEATURE_COLS = ['home_win_rate', 'home_draw_rate', 'away_win_rate', 'away_draw_rate', 'home_advantage']
+FEATURE_COLS = [
+    'home_win_rate', 'home_draw_rate', 'home_goals_scored', 'home_goals_conceded', 'home_form',
+    'away_win_rate', 'away_draw_rate', 'away_goals_scored', 'away_goals_conceded', 'away_form',
+    'home_advantage', 'form_diff', 'goal_diff',
+]
 
 
 def train_model(df: pd.DataFrame, model_path: str = MODEL_PATH):

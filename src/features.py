@@ -2,12 +2,54 @@
 import pandas as pd
 
 
+def _get_team_stats(past: pd.DataFrame, team: str, n: int = 10) -> dict:
+    """팀의 최근 N경기 통계 (홈/원정 구분 없이)."""
+    games = past[(past['home_team'] == team) | (past['away_team'] == team)].tail(n)
+    if len(games) == 0:
+        return {'win_rate': 0.0, 'draw_rate': 0.0, 'goals_scored': 0.0, 'goals_conceded': 0.0, 'form': 0.0, 'n': 0}
+
+    wins, draws, goals_scored, goals_conceded, points = 0, 0, 0, 0, 0
+    for _, g in games.iterrows():
+        is_home = g['home_team'] == team
+        if is_home:
+            gs, gc = g['home_score'], g['away_score']
+        else:
+            gs, gc = g['away_score'], g['home_score']
+
+        goals_scored += gs
+        goals_conceded += gc
+
+        if gs > gc:
+            wins += 1
+            points += 3
+        elif gs == gc:
+            draws += 1
+            points += 1
+
+    n_games = len(games)
+    return {
+        'win_rate': wins / n_games,
+        'draw_rate': draws / n_games,
+        'goals_scored': goals_scored / n_games,
+        'goals_conceded': goals_conceded / n_games,
+        'form': points / (n_games * 3),  # 0~1 정규화
+        'n': n_games,
+    }
+
+
+def _get_home_win_rate(past: pd.DataFrame, team: str) -> float:
+    """팀의 홈 경기 승률."""
+    home_games = past[past['home_team'] == team].tail(10)
+    if len(home_games) == 0:
+        return 0.0
+    wins = (home_games['home_score'] > home_games['away_score']).sum()
+    return wins / len(home_games)
+
+
 def build_features(df: pd.DataFrame) -> pd.DataFrame:
     """
     Build features from match DataFrame.
-
     Required columns: home_team, away_team, date, home_score, away_score
-    Returns DataFrame with added feature columns.
     """
     df = df.copy()
     df['date'] = pd.to_datetime(df['date'])
@@ -23,25 +65,31 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     for idx, row in df.iterrows():
         past = df[df['date'] < row['date']]
 
-        home_past = past[past['home_team'] == row['home_team']].tail(10)
-        away_past = past[past['away_team'] == row['away_team']].tail(10)
-
-        home_wins = (home_past['result'] == 'home').sum()
-        home_draws = (home_past['result'] == 'draw').sum()
-        home_n = len(home_past)
-
-        away_wins = (away_past['result'] == 'away').sum()
-        away_draws = (away_past['result'] == 'draw').sum()
-        away_n = len(away_past)
+        h = _get_team_stats(past, row['home_team'])
+        a = _get_team_stats(past, row['away_team'])
+        home_wr = _get_home_win_rate(past, row['home_team'])
 
         features.append({
-            'home_win_rate': home_wins / home_n if home_n > 0 else 0.0,
-            'home_draw_rate': home_draws / home_n if home_n > 0 else 0.0,
-            'away_win_rate': away_wins / away_n if away_n > 0 else 0.0,
-            'away_draw_rate': away_draws / away_n if away_n > 0 else 0.0,
-            'home_advantage': 1.0,
-            'home_n': home_n,
-            'away_n': away_n,
+            # 홈팀 피처
+            'home_win_rate': h['win_rate'],
+            'home_draw_rate': h['draw_rate'],
+            'home_goals_scored': h['goals_scored'],
+            'home_goals_conceded': h['goals_conceded'],
+            'home_form': h['form'],
+            # 원정팀 피처
+            'away_win_rate': a['win_rate'],
+            'away_draw_rate': a['draw_rate'],
+            'away_goals_scored': a['goals_scored'],
+            'away_goals_conceded': a['goals_conceded'],
+            'away_form': a['form'],
+            # 홈 어드밴티지 (실제 홈 승률)
+            'home_advantage': home_wr,
+            # 상대 비교
+            'form_diff': h['form'] - a['form'],
+            'goal_diff': h['goals_scored'] - a['goals_scored'],
+            # 데이터 수
+            'home_n': h['n'],
+            'away_n': a['n'],
         })
 
     feat_df = pd.DataFrame(features, index=df.index)
