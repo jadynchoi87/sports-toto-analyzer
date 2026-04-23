@@ -2,7 +2,7 @@ import streamlit as st
 from dotenv import load_dotenv
 load_dotenv()
 
-from src.db import init_db
+from src.db import init_db, get_matches
 from tabs import prediction, strategy_tab, verification
 
 DB_PATH = "data/toto.db"

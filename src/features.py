@@ -88,28 +88,56 @@ def _implied_probs(row) -> tuple[float, float, float]:
     return raw_h / total, raw_d / total, raw_a / total
 
 
+def _build_team_cache(df_hist: pd.DataFrame, teams: list, n: int = 10) -> dict:
+    """팀 목록에 대한 통계를 한 번에 계산해 캐시로 반환."""
+    cache = {}
+    for team in set(teams):
+        games = df_hist[(df_hist['home_team'] == team) | (df_hist['away_team'] == team)].tail(n)
+        home_games = df_hist[df_hist['home_team'] == team].tail(n)
+
+        if len(games) == 0:
+            cache[team] = {'win_rate': 0.0, 'draw_rate': 0.0, 'goals_scored': 0.0,
+                           'goals_conceded': 0.0, 'form': 0.0, 'n': 0, 'home_win_rate': 0.0}
+            continue
+
+        wins = draws = gs_total = gc_total = points = 0
+        for _, g in games.iterrows():
+            is_home = g['home_team'] == team
+            gs = g['home_score'] if is_home else g['away_score']
+            gc = g['away_score'] if is_home else g['home_score']
+            gs_total += gs; gc_total += gc
+            if gs > gc: wins += 1; points += 3
+            elif gs == gc: draws += 1; points += 1
+
+        ng = len(games)
+        hwr = ((home_games['home_score'] > home_games['away_score']).sum() / len(home_games)
+               if len(home_games) > 0 else 0.0)
+        cache[team] = {
+            'win_rate': wins / ng, 'draw_rate': draws / ng,
+            'goals_scored': gs_total / ng, 'goals_conceded': gc_total / ng,
+            'form': points / (ng * 3), 'n': ng, 'home_win_rate': hwr,
+        }
+    return cache
+
+
 def build_upcoming_features(df_hist: pd.DataFrame, df_upcoming: pd.DataFrame) -> pd.DataFrame:
     """
-    예정 경기 피처만 빠르게 계산. 과거 데이터 전체를 'past'로 사용.
-    build_features의 O(n²) 문제 없이 O(m) 처리.
+    예정 경기 피처 계산. 팀 통계를 캐시해 빠르게 처리.
     """
     df_hist = df_hist.copy()
     df_hist['date'] = pd.to_datetime(df_hist['date'])
     df_hist = df_hist.sort_values('date').reset_index(drop=True)
 
-    # result 컬럼 추가 (있을 수도 있으므로 조건부)
-    if 'result' not in df_hist.columns:
-        df_hist['result'] = df_hist.apply(
-            lambda r: 'home' if r['home_score'] > r['away_score']
-                      else ('draw' if r['home_score'] == r['away_score'] else 'away'),
-            axis=1
-        )
+    # 팀 통계 한 번만 계산
+    all_teams = list(df_upcoming['home_team']) + list(df_upcoming['away_team'])
+    team_cache = _build_team_cache(df_hist, all_teams)
 
     features = []
     for _, row in df_upcoming.iterrows():
-        h = _get_team_stats(df_hist, row['home_team'])
-        a = _get_team_stats(df_hist, row['away_team'])
-        home_wr = _get_home_win_rate(df_hist, row['home_team'])
+        h = team_cache.get(row['home_team'], {'win_rate': 0, 'draw_rate': 0, 'goals_scored': 0,
+                                               'goals_conceded': 0, 'form': 0, 'n': 0, 'home_win_rate': 0})
+        a = team_cache.get(row['away_team'], {'win_rate': 0, 'draw_rate': 0, 'goals_scored': 0,
+                                               'goals_conceded': 0, 'form': 0, 'n': 0, 'home_win_rate': 0})
         h2h = _get_h2h_stats(df_hist, row['home_team'], row['away_team'])
         imp_home, imp_draw, imp_away = _implied_probs(row)
 
@@ -120,7 +148,7 @@ def build_upcoming_features(df_hist: pd.DataFrame, df_upcoming: pd.DataFrame) ->
             'away_win_rate': a['win_rate'], 'away_draw_rate': a['draw_rate'],
             'away_goals_scored': a['goals_scored'], 'away_goals_conceded': a['goals_conceded'],
             'away_form': a['form'],
-            'home_advantage': home_wr,
+            'home_advantage': h['home_win_rate'],
             'form_diff': h['form'] - a['form'],
             'goal_diff': h['goals_scored'] - a['goals_scored'],
             'goals_conceded_diff': a['goals_conceded'] - h['goals_conceded'],

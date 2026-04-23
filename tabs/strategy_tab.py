@@ -7,16 +7,31 @@ from src.strategy import calc_kelly, calc_ev
 from src.upcoming import fetch_upcoming_matches
 
 
+@st.cache_data(ttl=3600)
+def _get_hist(db_path):
+    return get_matches(db_path)
+
+
+@st.cache_data(ttl=3600)
+def _get_upcoming(days_ahead):
+    return fetch_upcoming_matches(days_ahead=days_ahead)
+
+
+@st.cache_resource
+def _get_model():
+    return load_model()
+
+
 def render(db_path: str):
     st.header("전략")
 
     try:
-        model, le = load_model()
+        model, le = _get_model()
     except Exception:
         st.warning("모델 없음 — 먼저 모델을 학습시켜주세요.")
         return
 
-    matches = get_matches(db_path)
+    matches = _get_hist(db_path)
     if not matches:
         st.warning("과거 데이터 없음")
         return
@@ -32,7 +47,7 @@ def render(db_path: str):
     half = kelly_mode == "하프 켈리 (안전)"
 
     with st.spinner("예정 경기 불러오는 중..."):
-        upcoming = fetch_upcoming_matches(days_ahead=days_ahead)
+        upcoming = _get_upcoming(days_ahead)
 
     if not upcoming:
         st.info("예정된 경기가 없습니다.")
@@ -42,11 +57,11 @@ def render(db_path: str):
     df_upcoming['home_score'] = 0
     df_upcoming['away_score'] = 0
 
-    with st.spinner("예측 계산 중..."):
+    with st.spinner("확률 계산 중..."):
         upcoming_features = build_upcoming_features(df_hist, df_upcoming)
 
         outcome_kor = {'home': '홈 승', 'draw': '무승부', 'away': '원정 승'}
-        candidates = []
+        rows = []
 
         for i, (_, row) in enumerate(upcoming_features.iterrows()):
             match_info = upcoming[i]
@@ -57,16 +72,12 @@ def render(db_path: str):
             if best_prob < min_prob:
                 continue
 
-            # +EV가 되는 최소 배당 (EV=0 기준: odds_min = 1/prob)
             odds_min_ev0 = round(1 / best_prob, 2)
-            # EV≥0.05 기준: odds = 1.05/prob
             odds_min_ev5 = round(1.05 / best_prob, 2)
-
-            # 켈리 배팅 금액 (최소 배당 기준)
             kelly_f = calc_kelly(best_prob, odds_min_ev0, half=half)
             bet_amount = bankroll * kelly_f
 
-            candidates.append({
+            rows.append({
                 '날짜': match_info['date'],
                 '리그': match_info['competition'],
                 '홈팀': match_info['home_team'],
@@ -78,26 +89,19 @@ def render(db_path: str):
                 '추천 배팅액(원)': int(bet_amount),
             })
 
-    if not candidates:
+    if not rows:
         st.warning(f"신뢰도 {min_prob:.0%} 이상 경기 없음 — 슬라이더를 낮춰보세요.")
         return
 
-    df_result = pd.DataFrame(candidates)
-
+    df_result = pd.DataFrame(rows)
     st.subheader(f"배팅 추천 ({len(df_result)}경기)")
     st.caption("'최소 배당' 이상 배당을 찾으면 배팅하세요. 배팅 사이트에서 실제 배당 확인 필수.")
-
     st.dataframe(
-        df_result.style.format({
-            '신뢰도': '{:.1%}',
-            '추천 배팅액(원)': '{:,}',
-        }),
+        df_result.style.format({'신뢰도': '{:.1%}', '추천 배팅액(원)': '{:,}'}),
         use_container_width=True
     )
 
     st.divider()
-
-    # 수동 EV/Kelly 계산기
     st.subheader("EV / Kelly 계산기")
     st.caption("실제 배당을 찾았을 때 검증용")
     c1, c2 = st.columns(2)
