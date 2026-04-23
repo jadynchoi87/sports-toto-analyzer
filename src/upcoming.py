@@ -3,6 +3,12 @@ import os
 import requests
 from datetime import datetime, timedelta
 
+try:
+    import streamlit as st
+    _HAS_ST = True
+except ImportError:
+    _HAS_ST = False
+
 API_BASE = "https://api.football-data.org/v4"
 COMPETITIONS = ["PL", "BL1", "PD", "SA", "FL1"]
 COMPETITION_NAMES = {
@@ -13,7 +19,15 @@ COMPETITION_NAMES = {
 
 def fetch_upcoming_matches(days_ahead: int = 7) -> list[dict]:
     """다음 N일 이내 예정 경기 수집."""
-    api_key = os.environ.get("FOOTBALL_DATA_API_KEY", "")
+    # Streamlit Cloud secrets 우선, 없으면 환경변수
+    api_key = ""
+    if _HAS_ST:
+        try:
+            api_key = st.secrets["FOOTBALL_DATA_API_KEY"]
+        except Exception:
+            pass
+    if not api_key:
+        api_key = os.environ.get("FOOTBALL_DATA_API_KEY", "")
     date_from = datetime.now().strftime("%Y-%m-%d")
     date_to = (datetime.now() + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
 
