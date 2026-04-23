@@ -7,19 +7,16 @@ def _get_team_stats(past: pd.DataFrame, team: str, n: int = 10) -> dict:
     """팀의 최근 N경기 통계 (홈/원정 구분 없이)."""
     games = past[(past['home_team'] == team) | (past['away_team'] == team)].tail(n)
     if len(games) == 0:
-        return {'win_rate': 0.0, 'draw_rate': 0.0, 'goals_scored': 0.0, 'goals_conceded': 0.0, 'form': 0.0, 'n': 0}
+        return {'win_rate': 0.0, 'draw_rate': 0.0, 'goals_scored': 0.0,
+                'goals_conceded': 0.0, 'form': 0.0, 'n': 0}
 
     wins, draws, goals_scored, goals_conceded, points = 0, 0, 0, 0, 0
     for _, g in games.iterrows():
         is_home = g['home_team'] == team
-        if is_home:
-            gs, gc = g['home_score'], g['away_score']
-        else:
-            gs, gc = g['away_score'], g['home_score']
-
+        gs = g['home_score'] if is_home else g['away_score']
+        gc = g['away_score'] if is_home else g['home_score']
         goals_scored += gs
         goals_conceded += gc
-
         if gs > gc:
             wins += 1
             points += 3
@@ -33,24 +30,69 @@ def _get_team_stats(past: pd.DataFrame, team: str, n: int = 10) -> dict:
         'draw_rate': draws / n_games,
         'goals_scored': goals_scored / n_games,
         'goals_conceded': goals_conceded / n_games,
-        'form': points / (n_games * 3),  # 0~1 정규화
+        'form': points / (n_games * 3),
         'n': n_games,
     }
 
 
-def _get_home_win_rate(past: pd.DataFrame, team: str) -> float:
-    """팀의 홈 경기 승률."""
-    home_games = past[past['home_team'] == team].tail(10)
-    if len(home_games) == 0:
+def _get_home_win_rate(past: pd.DataFrame, team: str, n: int = 10) -> float:
+    """팀의 최근 N 홈경기 승률."""
+    games = past[past['home_team'] == team].tail(n)
+    if len(games) == 0:
         return 0.0
-    wins = (home_games['home_score'] > home_games['away_score']).sum()
-    return wins / len(home_games)
+    return (games['home_score'] > games['away_score']).sum() / len(games)
+
+
+def _get_h2h_stats(past: pd.DataFrame, home_team: str, away_team: str, n: int = 5) -> dict:
+    """두 팀 간 최근 N 맞대결 통계."""
+    h2h = past[
+        ((past['home_team'] == home_team) & (past['away_team'] == away_team)) |
+        ((past['home_team'] == away_team) & (past['away_team'] == home_team))
+    ].tail(n)
+
+    if len(h2h) == 0:
+        return {'h2h_home_win_rate': 0.33, 'h2h_draw_rate': 0.33, 'h2h_n': 0}
+
+    home_wins, draws = 0, 0
+    for _, g in h2h.iterrows():
+        if g['home_team'] == home_team:
+            if g['home_score'] > g['away_score']:
+                home_wins += 1
+            elif g['home_score'] == g['away_score']:
+                draws += 1
+        else:
+            if g['away_score'] > g['home_score']:
+                home_wins += 1
+            elif g['home_score'] == g['away_score']:
+                draws += 1
+
+    n_games = len(h2h)
+    return {
+        'h2h_home_win_rate': home_wins / n_games,
+        'h2h_draw_rate': draws / n_games,
+        'h2h_n': n_games,
+    }
+
+
+def _implied_probs(row) -> tuple[float, float, float]:
+    """Pinnacle 배당 → 마진 제거된 내재 확률."""
+    ph = float(row.get('home_odds') or 0)
+    pd_ = float(row.get('draw_odds') or 0)
+    pa = float(row.get('away_odds') or 0)
+
+    if ph <= 0 or pd_ <= 0 or pa <= 0:
+        return 1/3, 1/3, 1/3
+
+    raw_h, raw_d, raw_a = 1/ph, 1/pd_, 1/pa
+    total = raw_h + raw_d + raw_a
+    return raw_h / total, raw_d / total, raw_a / total
 
 
 def build_features(df: pd.DataFrame) -> pd.DataFrame:
     """
     Build features from match DataFrame.
     Required columns: home_team, away_team, date, home_score, away_score
+    home_odds/draw_odds/away_odds: Pinnacle 배당 (있으면 사용)
     """
     df = df.copy()
     df['date'] = pd.to_datetime(df['date'])
@@ -69,35 +111,32 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
         h = _get_team_stats(past, row['home_team'])
         a = _get_team_stats(past, row['away_team'])
         home_wr = _get_home_win_rate(past, row['home_team'])
-
-        # 배당 내재 확률 (북메이커 정보)
-        ho = float(row['home_odds']) if pd.notna(row.get('home_odds')) and row.get('home_odds') else 0
-        do = float(row['draw_odds']) if pd.notna(row.get('draw_odds')) and row.get('draw_odds') else 0
-        ao = float(row['away_odds']) if pd.notna(row.get('away_odds')) and row.get('away_odds') else 0
-        total_imp = (1/ho if ho > 0 else 0) + (1/do if do > 0 else 0) + (1/ao if ao > 0 else 0)
-        imp_home = (1/ho / total_imp) if ho > 0 and total_imp > 0 else 1/3
-        imp_draw = (1/do / total_imp) if do > 0 and total_imp > 0 else 1/3
-        imp_away = (1/ao / total_imp) if ao > 0 and total_imp > 0 else 1/3
+        h2h = _get_h2h_stats(past, row['home_team'], row['away_team'])
+        imp_home, imp_draw, imp_away = _implied_probs(row)
 
         features.append({
-            # 홈팀 피처
+            # 홈팀 폼
             'home_win_rate': h['win_rate'],
             'home_draw_rate': h['draw_rate'],
             'home_goals_scored': h['goals_scored'],
             'home_goals_conceded': h['goals_conceded'],
             'home_form': h['form'],
-            # 원정팀 피처
+            # 원정팀 폼
             'away_win_rate': a['win_rate'],
             'away_draw_rate': a['draw_rate'],
             'away_goals_scored': a['goals_scored'],
             'away_goals_conceded': a['goals_conceded'],
             'away_form': a['form'],
-            # 홈 어드밴티지 (실제 홈 승률)
+            # 홈 어드밴티지
             'home_advantage': home_wr,
             # 상대 비교
             'form_diff': h['form'] - a['form'],
             'goal_diff': h['goals_scored'] - a['goals_scored'],
-            # 배당 내재 확률 (핵심 피처)
+            'goals_conceded_diff': a['goals_conceded'] - h['goals_conceded'],
+            # H2H
+            'h2h_home_win_rate': h2h['h2h_home_win_rate'],
+            'h2h_draw_rate': h2h['h2h_draw_rate'],
+            # 배당 내재 확률 (마진 제거)
             'imp_home': imp_home,
             'imp_draw': imp_draw,
             'imp_away': imp_away,

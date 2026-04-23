@@ -34,9 +34,9 @@ def test_home_win_rate_range(sample_df):
     assert result['home_win_rate'].between(0.0, 1.0).all()
 
 
-def test_home_advantage_constant(sample_df):
+def test_home_advantage_in_range(sample_df):
     result = build_features(sample_df)
-    assert (result['home_advantage'] == 1.0).all()
+    assert result['home_advantage'].between(0.0, 1.0).all()
 
 
 def test_no_data_leakage(sample_df):

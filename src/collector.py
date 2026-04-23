@@ -100,6 +100,14 @@ def collect_odds_csv(db_path: str = "data/toto.db", num_seasons: int = 3):
                         match_id = f"csv_{league_code}_{season}_{row['HomeTeam']}_{row['AwayTeam']}_{date_str}"
                         match_id = match_id.replace(' ', '_')
 
+                        # Pinnacle 우선, 없으면 Bet365 fallback
+                        def _odds(col_p, col_b):
+                            if col_p in row and pd.notna(row[col_p]) and float(row[col_p]) > 1:
+                                return float(row[col_p])
+                            if col_b in row and pd.notna(row[col_b]) and float(row[col_b]) > 1:
+                                return float(row[col_b])
+                            return None
+
                         match = {
                             "match_id": match_id,
                             "date": date_str,
@@ -107,9 +115,9 @@ def collect_odds_csv(db_path: str = "data/toto.db", num_seasons: int = 3):
                             "away_team": str(row['AwayTeam']),
                             "home_score": int(row['FTHG']),
                             "away_score": int(row['FTAG']),
-                            "home_odds": float(row['B365H']) if 'B365H' in row and pd.notna(row['B365H']) else None,
-                            "draw_odds": float(row['B365D']) if 'B365D' in row and pd.notna(row['B365D']) else None,
-                            "away_odds": float(row['B365A']) if 'B365A' in row and pd.notna(row['B365A']) else None,
+                            "home_odds": _odds('PSH', 'B365H'),
+                            "draw_odds": _odds('PSD', 'B365D'),
+                            "away_odds": _odds('PSA', 'B365A'),
                             "competition": competition,
                         }
                         insert_match(db_path, match)
